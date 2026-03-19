@@ -22,7 +22,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETH Paper Trading Bot</title>
+<title>BTC Paper Trading Bot</title>
 <style>
   :root {
     --bg: #0d1117; --surface: #161b22; --border: #30363d;
@@ -75,7 +75,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
   <!-- KPI row -->
   <div class="metrics-row" id="kpi-row">
-    <div class="metric"><div class="metric-label">ETH Price</div><div class="metric-val blue" id="eth-price">–</div></div>
+    <div class="metric"><div class="metric-label">BTC Price</div><div class="metric-val blue" id="eth-price">–</div></div>
     <div class="metric"><div class="metric-label">DVOL</div><div class="metric-val" id="dvol">–</div></div>
     <div class="metric"><div class="metric-label">Paper Capital</div><div class="metric-val">${{ "{:,.0f}".format(capital) }}</div></div>
     <div class="metric"><div class="metric-label">Total P&L</div><div class="metric-val" id="total-pnl">–</div></div>
@@ -101,7 +101,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <thead>
         <tr>
           <th>#</th><th>Opened</th><th>Closed</th><th>Status</th>
-          <th>ETH Entry</th><th>Call Strike</th><th>Put Strike</th>
+          <th>BTC Entry</th><th>Call Strike</th><th>Put Strike</th>
           <th>Premium $</th><th>Opt P&L</th><th>Hedge P&L</th><th>Net P&L</th><th>P&L %</th><th>DVOL</th>
         </tr>
       </thead>
@@ -192,7 +192,7 @@ async function refresh() {
     } else {
       openEl.innerHTML = `<div style="overflow-x:auto"><table>
         <thead><tr>
-          <th>#</th><th>Opened</th><th>ETH Entry</th><th>Short put</th><th>Short call</th>
+          <th>#</th><th>Opened</th><th>BTC Entry</th><th>Short put</th><th>Short call</th>
           <th>Premium $</th><th>Unrealised P&L</th><th>SL Threshold</th><th>Max Loss</th><th>DVOL</th>
         </tr></thead><tbody>
         ${d.open_trades.map(t => `<tr>

@@ -94,7 +94,7 @@ class DeribitClient:
     async def _subscribe_base(self):
         await self._send_and_drain("public/subscribe", {"channels": [
             "deribit_price_index.btc_usd",
-            "deribit_volatility_index.eth_usd",
+            "deribit_volatility_index.btc_usd",
             "book.ETH-PERPETUAL.none.20.100ms",
         ]})
         log.info("Subscribed to base channels")

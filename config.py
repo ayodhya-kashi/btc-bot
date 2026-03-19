@@ -35,8 +35,8 @@ SHORT_DELTA           = 0.20      # sell ~20-delta strikes each side
 WING_WIDTH_PCT        = 0.04      # long strikes 4% further OTM than short
 DVOL_MIN              = 45.0
 DVOL_MAX              = 80.0
-ENTRY_HOUR_UTC        = 10
-ENTRY_HOUR_UTC_END    = 12
+ENTRY_HOUR_UTC        = 8
+ENTRY_HOUR_UTC_END    = 20
 TAKE_PROFIT_PCT       = 0.50      # close at 50% of premium collected
 STOP_LOSS_MULT        = 2.0       # close if loss > 2× premium received
 
