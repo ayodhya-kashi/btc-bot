@@ -58,7 +58,7 @@ def find_strike_near_delta(S, expiry_ts_ms, sigma, target_delta, option_type):
         else:
             if abs(d) < target_delta: lo = mid
             else: hi = mid
-    return round(round((lo + hi) / 2 / 25) * 25, 0)
+    return round(round((lo + hi) / 2 / 1000) * 1000, 0)
 
 def check_liquidity(ticker, role):
     """
@@ -78,10 +78,10 @@ def check_liquidity(ticker, role):
     spread_pct = (ask - bid) / mid
     if spread_pct > 0.30:
         return 0, False, f"{role}: spread {spread_pct:.0%} > 30%"
-    if role in ("sc", "sp") and bsz < 5:
-        return 0, False, f"{role}: bid size {bsz} < 5 contracts"
-    if role in ("lc", "lp") and asz < 5:
-        return 0, False, f"{role}: ask size {asz} < 5 contracts"
+    if role in ("sc", "sp") and bsz < 0.75:
+        return 0, False, f"{role}: bid size {bsz} < 0.75 contracts"
+    if role in ("lc", "lp") and asz < 0.75:
+        return 0, False, f"{role}: ask size {asz} < 0.75 contracts"
 
     # use bid for sells (sc, sp), ask for buys (lc, lp)
     fill = bid if role in ("sc", "sp") else ask
@@ -185,10 +185,9 @@ class StrategyEngine:
         now_utc = datetime.now(timezone.utc)
         today   = now_utc.date()
         if self._last_trade_day == today: return
-        sh, sm, eh, em = self._get_todays_entry_window(today)
         now_mins = now_utc.hour * 60 + now_utc.minute
-        window_start = sh * 60 + sm
-        window_end   = eh * 60 + em
+        window_start = ENTRY_HOUR_UTC * 60
+        window_end   = ENTRY_HOUR_UTC_END * 60
         if not (window_start <= now_mins < window_end): return
         if not (DVOL_MIN <= dvol <= DVOL_MAX):
             log.info(f"DVOL {dvol:.1f} outside range — skip")
@@ -204,9 +203,6 @@ class StrategyEngine:
 
         short_call = find_strike_near_delta(btc, expiry_ts_ms, sigma, SHORT_DELTA, "call")
         short_put  = find_strike_near_delta(btc, expiry_ts_ms, sigma, SHORT_DELTA, "put")
-        wing_off   = round(round(btc * WING_WIDTH_PCT / 25) * 25, 0)
-        long_call  = short_call + wing_off
-        long_put   = short_put  - wing_off
 
         legs = [
             (short_call, "C", "sc"),
@@ -244,7 +240,6 @@ class StrategyEngine:
             return
 
         net_usd        = net_eth * btc
-        call_width_usd = (long_call  - short_call) * 1   # per 1 ETH contract
         # fixed 2 contracts always
         contracts    = 2
 
@@ -308,9 +303,9 @@ class StrategyEngine:
 
         # current BS value of each leg
         sc_now = bs_price(btc, pos["short_call_strike"], T, sigma, "call")
-        lc_now = bs_price(btc, pos["long_call_strike"],  T, sigma, "call")
+        lc_now = 0.0
         sp_now = bs_price(btc, pos["short_put_strike"],  T, sigma, "put")
-        lp_now = bs_price(btc, pos["long_put_strike"],   T, sigma, "put")
+        lp_now = 0.0
 
         # fetch trade row from DB first (needed for entry premiums + SL threshold)
         trade_rows = db.get_all_trades()
@@ -319,9 +314,9 @@ class StrategyEngine:
 
         # entry values from DB (all 4 legs now stored)
         sc_entry = pos.get("sc_entry_eth", t.get("call_premium", 0)) * btc
-        lc_entry = pos.get("lc_entry_eth", t.get("long_call_premium", 0)) * btc
+        lc_entry = 0.0
         sp_entry = pos.get("sp_entry_eth", t.get("put_premium", 0)) * btc
-        lp_entry = pos.get("lp_entry_eth", t.get("long_put_premium", 0)) * btc
+        lp_entry = 0.0
 
         # P&L = (entry value sold - current value sold) + (current value bought - entry value bought)
         option_pnl = (
@@ -333,7 +328,6 @@ class StrategyEngine:
             await self._close(trade_id, btc, sc_now, sp_now, option_pnl, "CLOSED_SL")
         elif T <= 0:
             await self._close(trade_id, btc, sc_now, sp_now, option_pnl, "CLOSED_EXPIRY")
-        elif btc >= pos["long_call_strike"] or btc <= pos["long_put_strike"]:
             log.warning(f"#{trade_id}: ETH {btc:.0f} breached wing — emergency close")
             await self._close(trade_id, btc, sc_now, sp_now, option_pnl, "CLOSED_SL")
 
