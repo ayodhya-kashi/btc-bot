@@ -162,7 +162,7 @@ async function refresh() {
     const d = await r.json();
 
     // KPIs
-    document.getElementById('eth-price').textContent = d.market.btc_price ? '$'+Number(d.market.btc_price).toLocaleString('en',{maximumFractionDigits:0}) : '–';
+    document.getElementById('eth-price').textContent = d.market.eth_price ? '$'+Number(d.market.eth_price).toLocaleString('en',{maximumFractionDigits:0}) : '–';
     const dv = d.market.dvol;
     const dvEl = document.getElementById('dvol');
     dvEl.textContent = dv ? dv.toFixed(1) : '–';
@@ -180,7 +180,7 @@ async function refresh() {
     document.getElementById('best-trade').textContent = fmtUSD(d.stats.best_trade);
 
     // market conditions sidebar
-    document.getElementById('c-eth').textContent = d.market.btc_price ? '$'+Number(d.market.btc_price).toLocaleString('en',{maximumFractionDigits:2}) : '–';
+    document.getElementById('c-eth').textContent = d.market.eth_price ? '$'+Number(d.market.eth_price).toLocaleString('en',{maximumFractionDigits:2}) : '–';
     document.getElementById('c-dvol').textContent = dv ? dv.toFixed(1) : '–';
     document.getElementById('c-spread').textContent = d.market.bid_ask_spread_perp ? '$'+Number(d.market.bid_ask_spread_perp).toFixed(3) : '–';
 
@@ -285,49 +285,28 @@ def api_state():
         pos_state = _strategy_engine.get_open_positions_state()
         for t in open_trades:
             ps = pos_state.get(t["id"])
-            # calculate live unrealised P&L using live bid/ask from Deribit
+            # calculate unrealised P&L using Black-Scholes
             if ps:
-                import asyncio as _aio
-                eth = snap.get("btc_price", 0)
-                c   = ps.get("contracts", 1)
-                expiry = ps.get("expiry_label", "")
-                sc_inst = f"ETH-{expiry}-{ps.get('short_call_strike',(t['call_strike']))}-C"
-                sp_inst = f"ETH-{expiry}-{ps.get('short_put_strike', (t['put_strike']))}-P"
-                lc_inst = f"ETH-{expiry}-{ps.get('long_call_strike',  t.get('long_call_strike', t['call_strike']+100))}-C"
-                lp_inst = f"ETH-{expiry}-{ps.get('long_put_strike',   t.get('long_put_strike',  t['put_strike']-100))}-P"
-
-                async def _fetch_bids():
-                    results = {}
-                    for inst in [sc_inst, sp_inst, lc_inst, lp_inst]:
-                        try:
-                            tk = await _strategy_engine.client.get_ticker(inst)
-                            results[inst] = {
-                                "bid": tk.get("best_bid_price", 0) or 0,
-                                "ask": tk.get("best_ask_price", 0) or 0,
-                            }
-                        except Exception:
-                            results[inst] = {"bid": 0, "ask": 0}
-                    return results
-
-                try:
-                    loop = _aio.new_event_loop()
-                    tks  = loop.run_until_complete(_fetch_bids())
-                    loop.close()
-                    # short legs: cost to close = ask (we buy back what we sold)
-                    # long legs:  value to close = bid (we sell what we bought)
-                    sc_close = tks[sc_inst]["ask"] * eth
-                    sp_close = tks[sp_inst]["ask"] * eth
-                    lc_close = tks[lc_inst]["bid"] * eth
-                    lp_close = tks[lp_inst]["bid"] * eth
-                    sc_e = t.get("call_premium", 0) * eth
-                    sp_e = t.get("put_premium",  0) * eth
-                    lc_e = t.get("long_call_premium", 0) * eth
-                    lp_e = t.get("long_put_premium",  0) * eth
-                    # P&L = what we received - cost to close
-                    t["_unrealised"] = ((sc_e - sc_close) + (sp_e - sp_close) +
-                                        (lc_close - lc_e) + (lp_close - lp_e)) * c
-                except Exception as ex:
-                    t["_unrealised"] = None
+                from math import log as ml, sqrt
+                from statistics import NormalDist
+                import time as _time
+                eth = snap.get("eth_price", 0)
+                dvol = snap.get("dvol", 60)
+                sigma = dvol / 100.0
+                expiry_ts = ps.get("expiry_ts_ms", 0)
+                T = max((expiry_ts - _time.time()*1000)/1000/(365.25*24*3600), 0)
+                nd = NormalDist()
+                def bsp(S, K, T, sig, ot):
+                    if T <= 0: return max(S-K,0) if ot=="call" else max(K-S,0)
+                    d1 = (ml(S/K) + 0.5*sig**2*T) / (sig*sqrt(T))
+                    d2 = d1 - sig*sqrt(T)
+                    return (S*nd.cdf(d1) - K*nd.cdf(d2)) if ot=="call" else (K*nd.cdf(-d2) - S*nd.cdf(-d1))
+                c = ps.get("contracts", 1)
+                sc_now = bsp(eth, ps.get("short_call_strike", t["call_strike"]), T, sigma, "call")
+                sp_now = bsp(eth, ps.get("short_put_strike",  t["put_strike"]),  T, sigma, "put")
+                sc_e = t.get("call_premium", 0) * eth
+                sp_e = t.get("put_premium",  0) * eth
+                t["_unrealised"] = ((sc_e - sc_now) + (sp_e - sp_now)) * c
             else:
                 t["_unrealised"] = None
 
