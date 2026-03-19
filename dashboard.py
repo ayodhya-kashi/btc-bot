@@ -22,7 +22,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>BTC Paper Trading Bot</title>
+<title>ETH Paper Trading Bot</title>
 <style>
   :root {
     --bg: #0d1117; --surface: #161b22; --border: #30363d;
@@ -68,14 +68,14 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <h1><span class="live-dot"></span>BTC Paper Bot — Strangle</h1>
+  <h1><span class="live-dot"></span>ETH Paper Bot — Strangle</h1>
   <span id="last-update">–</span>
 </header>
 <div class="container">
 
   <!-- KPI row -->
   <div class="metrics-row" id="kpi-row">
-    <div class="metric"><div class="metric-label">BTC Price</div><div class="metric-val blue" id="eth-price">–</div></div>
+    <div class="metric"><div class="metric-label">ETH Price</div><div class="metric-val blue" id="eth-price">–</div></div>
     <div class="metric"><div class="metric-label">DVOL</div><div class="metric-val" id="dvol">–</div></div>
     <div class="metric"><div class="metric-label">Paper Capital</div><div class="metric-val">${{ "{:,.0f}".format(capital) }}</div></div>
     <div class="metric"><div class="metric-label">Total P&L</div><div class="metric-val" id="total-pnl">–</div></div>
@@ -101,7 +101,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <thead>
         <tr>
           <th>#</th><th>Opened</th><th>Closed</th><th>Status</th>
-          <th>BTC Entry</th><th>Call Strike</th><th>Put Strike</th>
+          <th>ETH Entry</th><th>Call Strike</th><th>Put Strike</th>
           <th>Premium $</th><th>Opt P&L</th><th>Hedge P&L</th><th>Net P&L</th><th>P&L %</th><th>DVOL</th>
         </tr>
       </thead>
@@ -115,7 +115,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   <!-- Hedge log for open trades -->
   <div class="two-col">
     <div class="section">
-      <div class="section-header">Hedge Events (open trade)</div>
+      <div class="section-header">Live Leg Prices</div>
       <div class="hedge-log" id="hedge-log-panel">
         <div class="no-data" style="padding:20px">No hedges yet</div>
       </div>
@@ -124,7 +124,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="section-header">Market Conditions</div>
       <table id="conditions-table">
         <tbody>
-          <tr><td style="color:var(--muted)">BTC/USD</td><td id="c-eth">–</td></tr>
+          <tr><td style="color:var(--muted)">ETH/USD</td><td id="c-eth">–</td></tr>
           <tr><td style="color:var(--muted)">DVOL</td><td id="c-dvol">–</td></tr>
           <tr><td style="color:var(--muted)">DVOL range</td><td>{{ dvol_min }}–{{ dvol_max }}</td></tr>
           <tr><td style="color:var(--muted)">Entry window</td><td>{{ entry_start }}:00–{{ entry_end }}:00 UTC</td></tr>
@@ -187,18 +187,41 @@ async function refresh() {
     // open positions
     const openEl = document.getElementById('open-positions');
     document.getElementById('open-badge').textContent = d.open_trades.length;
+        // render leg prices panel
+        const legsEl = document.getElementById('leg-prices');
+        if (legsEl && d.open_trades.length > 0) {
+          const t = d.open_trades[0];
+          const legs = t.legs || [];
+          legsEl.innerHTML = legs.length ? `<table style="width:100%;font-size:12px">
+            <thead><tr>
+              <th style="text-align:left">Leg</th>
+              <th>Entry $</th><th>Bid $</th><th>Ask $</th><th>Mid $</th><th>P&L $</th>
+            </tr></thead><tbody>
+            ${legs.map(l => {
+              const pnl = (l.entry_usd - l.mid_usd) * (t.contracts || 2);
+              return `<tr>
+                <td>${l.name}</td>
+                <td class="mono">${fmtUSD(l.entry_usd)}</td>
+                <td class="mono">${fmtUSD(l.bid_usd)}</td>
+                <td class="mono">${fmtUSD(l.ask_usd)}</td>
+                <td class="mono">${fmtUSD(l.mid_usd)}</td>
+                <td class="${color(pnl)}">${fmtUSD(pnl)}</td>
+              </tr>`;
+            }).join('')}
+            </tbody></table>` : '<div class="no-data">No leg data yet</div>';
+        }
     if (d.open_trades.length === 0) {
       openEl.innerHTML = '<div class="no-data">No open positions — scouting...</div>';
     } else {
       openEl.innerHTML = `<div style="overflow-x:auto"><table>
         <thead><tr>
-          <th>#</th><th>Opened</th><th>BTC Entry</th><th>Short put</th><th>Short call</th>
+          <th>#</th><th>Opened</th><th>ETH Entry</th><th>Short put</th><th>Short call</th>
           <th>Premium $</th><th>Unrealised P&L</th><th>SL Threshold</th><th>Max Loss</th><th>DVOL</th>
         </tr></thead><tbody>
         ${d.open_trades.map(t => `<tr>
           <td class="mono">#${t.id}</td>
           <td>${tsToTime(t.open_time)}</td>
-          <td class="mono">$${Number(t.btc_price_entry).toLocaleString()}</td>
+          <td class="mono">$${Number(t.eth_price_entry).toLocaleString()}</td>
           <td class="mono tag">${t.long_put_strike}P/${t.put_strike}P</td>
           <td class="mono tag">${t.call_strike}C/${t.long_call_strike}C</td>
           <td>${fmtUSD(t.total_premium_collected)}</td>
@@ -220,7 +243,7 @@ async function refresh() {
         <td class="mono">${tsToDate(t.open_time)} ${tsToTime(t.open_time)}</td>
         <td class="mono">${t.close_time ? tsToTime(t.close_time) : '–'}</td>
         <td>${statusBadge(t.status)}</td>
-        <td class="mono">$${Number(t.btc_price_entry||0).toLocaleString()}</td>
+        <td class="mono">$${Number(t.eth_price_entry||0).toLocaleString()}</td>
         <td class="mono tag">${t.call_strike}</td>
         <td class="mono tag">${t.put_strike}</td>
         <td>${fmtUSD(t.total_premium_collected)}</td>
@@ -238,12 +261,35 @@ async function refresh() {
       hedgePanel.innerHTML = d.hedge_events.slice(-30).reverse().map(h => `
         <div class="hedge-item">
           <span style="color:${h.direction==='BUY'?'var(--green)':'var(--red)'}">${h.direction}</span>
-          ${Math.abs(h.qty_eth).toFixed(4)} ETH @ $${Number(h.btc_price).toFixed(2)}
+          ${Math.abs(h.qty_eth).toFixed(4)} ETH @ $${Number(h.eth_price).toFixed(2)}
           <span style="color:var(--muted)"> | slip -$${Number(h.slippage_usd).toFixed(3)}</span>
           <span style="float:right;color:var(--muted)">${tsToTime(h.ts)}</span>
         </div>`).join('');
     } else {
-      hedgePanel.innerHTML = '<div class="no-data" style="padding:20px">No hedge events</div>';
+      // render live leg prices
+        const legsData = d.open_trades[0]?.legs || [];
+        hedgePanel.innerHTML = legsData.length ? `<table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="border-bottom:1px solid var(--muted)">
+            <th style="text-align:left;padding:6px">Leg</th>
+            <th style="padding:6px">Entry $</th>
+            <th style="padding:6px">Bid $</th>
+            <th style="padding:6px">Ask $</th>
+            <th style="padding:6px">Mid $</th>
+            <th style="padding:6px">P&L $</th>
+          </tr></thead><tbody>
+          ${legsData.map(l => {
+            const pnl = l.entry_usd - l.mid_usd;
+            return `<tr style="border-bottom:1px solid var(--border)">
+              <td style="padding:6px">${l.name}</td>
+              <td class="mono" style="padding:6px;text-align:right">${fmtUSD(l.entry_usd)}</td>
+              <td class="mono" style="padding:6px;text-align:right">${fmtUSD(l.bid_usd)}</td>
+              <td class="mono" style="padding:6px;text-align:right">${fmtUSD(l.ask_usd)}</td>
+              <td class="mono" style="padding:6px;text-align:right">${fmtUSD(l.mid_usd)}</td>
+              <td class="mono ${color(pnl)}" style="padding:6px;text-align:right;font-weight:600">${fmtUSD(pnl)}</td>
+            </tr>`;
+          }).join('')}
+          </tbody></table>` :
+          '<div class="no-data" style="padding:20px">No open position</div>';
     }
 
     document.getElementById('last-update').textContent = 'Updated ' + new Date().toISOString().slice(11,19) + ' UTC';
@@ -287,13 +333,13 @@ def api_state():
             ps = pos_state.get(t["id"])
             # calculate unrealised P&L using Black-Scholes
             if ps:
-                from math import log as ml, sqrt
+                from math import log as ml, sqrt, exp
                 from statistics import NormalDist
-                import time as _time
                 eth = snap.get("eth_price", 0)
                 dvol = snap.get("dvol", 60)
                 sigma = dvol / 100.0
                 expiry_ts = ps.get("expiry_ts_ms", 0)
+                import time as _time
                 T = max((expiry_ts - _time.time()*1000)/1000/(365.25*24*3600), 0)
                 nd = NormalDist()
                 def bsp(S, K, T, sig, ot):
@@ -306,9 +352,29 @@ def api_state():
                 sp_now = bsp(eth, ps.get("short_put_strike",  t["put_strike"]),  T, sigma, "put")
                 sc_e = t.get("call_premium", 0) * eth
                 sp_e = t.get("put_premium",  0) * eth
+                # P&L = premium received - current cost to close (BS mark)
                 t["_unrealised"] = ((sc_e - sc_now) + (sp_e - sp_now)) * c
             else:
                 t["_unrealised"] = None
+            # add live leg prices if available
+            if ps:
+                eth_p = snap.get("eth_price", 0)
+                t["legs"] = [
+                    {
+                        "name": "Short call",
+                        "entry_usd": t.get("call_premium", 0) * eth_p,
+                        "bid_usd": ps.get("live_sc", {}).get("bid", 0) * eth_p,
+                        "ask_usd": ps.get("live_sc", {}).get("ask", 0) * eth_p,
+                        "mid_usd": ps.get("live_sc", {}).get("mid", 0) * eth_p,
+                    },
+                    {
+                        "name": "Short put",
+                        "entry_usd": t.get("put_premium", 0) * eth_p,
+                        "bid_usd": ps.get("live_sp", {}).get("bid", 0) * eth_p,
+                        "ask_usd": ps.get("live_sp", {}).get("ask", 0) * eth_p,
+                        "mid_usd": ps.get("live_sp", {}).get("mid", 0) * eth_p,
+                    }
+                ]
 
     # hedge events for first open trade
     hedge_events = []
@@ -333,4 +399,4 @@ def health():
     return "ok", 200
 
 def run_dashboard():
-    app.run(host=DASHBOARD_HOST, port=DASHBOARD_PORT, debug=False, use_reloader=False, threaded=True)
+    app.run(host=DASHBOARD_HOST, port=DASHBOARD_PORT, debug=False, use_reloader=False)
