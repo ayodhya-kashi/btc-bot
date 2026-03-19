@@ -119,7 +119,7 @@ class StrategyEngine:
             expiry_ts_ms = self._expiry_label_to_ts(t["call_expiry"])
             if not expiry_ts_ms: continue
             notes = dict(x.split("=") for x in t["notes"].split("|") if "=" in x)
-            contracts        = int(notes.get("contracts", 1))
+            contracts        = float(notes.get("contracts", 1))
             long_call_strike = float(notes.get("long_call", t["call_strike"] + 100))
             long_put_strike  = float(notes.get("long_put",  t["put_strike"]  - 100))
             call_width       = float(notes.get("call_width", 100))

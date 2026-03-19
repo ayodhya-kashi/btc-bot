@@ -354,4 +354,4 @@ def health():
     return "ok", 200
 
 def run_dashboard():
-    app.run(host=DASHBOARD_HOST, port=DASHBOARD_PORT, debug=False, use_reloader=False)
+    app.run(host=DASHBOARD_HOST, port=DASHBOARD_PORT, debug=False, use_reloader=False, threaded=True)
