@@ -185,6 +185,14 @@ class StrategyEngine:
         now_utc = datetime.now(timezone.utc)
         today   = now_utc.date()
         if self._last_trade_day == today: return
+        # also check DB for trades opened today (survives restarts)
+        all_trades = db.get_all_trades()
+        for t in all_trades:
+            if t.get("status") == "OPEN":
+                trade_date = datetime.fromtimestamp(t["open_time"], tz=timezone.utc).date()
+                if trade_date == today:
+                    self._last_trade_day = today
+                    return
         now_mins = now_utc.hour * 60 + now_utc.minute
         window_start = ENTRY_HOUR_UTC * 60
         window_end   = ENTRY_HOUR_UTC_END * 60
