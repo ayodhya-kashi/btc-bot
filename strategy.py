@@ -58,7 +58,7 @@ def find_strike_near_delta(S, expiry_ts_ms, sigma, target_delta, option_type):
         else:
             if abs(d) < target_delta: lo = mid
             else: hi = mid
-    return round(round((lo + hi) / 2 / 1000) * 1000, 0)
+    return round(round((lo + hi) / 2 / 25) * 25, 0)
 
 def check_liquidity(ticker, role):
     """
@@ -78,10 +78,10 @@ def check_liquidity(ticker, role):
     spread_pct = (ask - bid) / mid
     if spread_pct > 0.30:
         return 0, False, f"{role}: spread {spread_pct:.0%} > 30%"
-    if role in ("sc", "sp") and bsz < 0.75:
-        return 0, False, f"{role}: bid size {bsz} < 0.75 contracts"
-    if role in ("lc", "lp") and asz < 0.75:
-        return 0, False, f"{role}: ask size {asz} < 0.75 contracts"
+    if role in ("sc", "sp") and bsz < 5:
+        return 0, False, f"{role}: bid size {bsz} < 5 contracts"
+    if role in ("lc", "lp") and asz < 5:
+        return 0, False, f"{role}: ask size {asz} < 5 contracts"
 
     # use bid for sells (sc, sp), ask for buys (lc, lp)
     fill = bid if role in ("sc", "sp") else ask
@@ -119,7 +119,7 @@ class StrategyEngine:
             expiry_ts_ms = self._expiry_label_to_ts(t["call_expiry"])
             if not expiry_ts_ms: continue
             notes = dict(x.split("=") for x in t["notes"].split("|") if "=" in x)
-            contracts        = float(notes.get("contracts", 1))
+            contracts        = int(notes.get("contracts", 1))
             long_call_strike = float(notes.get("long_call", t["call_strike"] + 100))
             long_put_strike  = float(notes.get("long_put",  t["put_strike"]  - 100))
             call_width       = float(notes.get("call_width", 100))
@@ -141,7 +141,7 @@ class StrategyEngine:
 
     async def run(self):
         self._running = True
-        log.info("BTC Strangle engine started")
+        log.info("Strangle engine started")
         await self.recover_open_trades()
         while self._running:
             try:
@@ -151,19 +151,31 @@ class StrategyEngine:
             await asyncio.sleep(30)
 
     async def _tick(self):
-        btc = self.client._btc_price
+        eth = self.client._eth_price
         dvol = self.client._dvol
-        if btc is None or dvol is None:
+        if eth is None or dvol is None:
             log.debug("Waiting for market data...")
             return
         db.upsert_snapshot({
-            "ts": time.time(), "eth_price": btc, "dvol": dvol,
+            "ts": time.time(), "eth_price": eth, "dvol": dvol,
             "eth_iv_atm": dvol / 100.0,
             "bid_ask_spread_perp": self._get_perp_spread(),
         })
         for trade_id in list(self._open_positions.keys()):
-            await self._manage_position(trade_id, btc, dvol)
-        await self._scout_entry(btc, dvol)
+            pos = self._open_positions.get(trade_id)
+            if pos:
+                expiry = pos.get("expiry_label", "")
+                sc_strike = int(pos.get("short_call_strike", 0))
+                sp_strike = int(pos.get("short_put_strike", 0))
+                try:
+                    sc_t = await self.client.get_ticker(f"BTC-{expiry}-{sc_strike}-C")
+                    sp_t = await self.client.get_ticker(f"BTC-{expiry}-{sp_strike}-P")
+                    pos["live_sc"] = {"bid": sc_t.get("best_bid_price",0), "ask": sc_t.get("best_ask_price",0), "mid": (sc_t.get("best_bid_price",0)+sc_t.get("best_ask_price",0))/2}
+                    pos["live_sp"] = {"bid": sp_t.get("best_bid_price",0), "ask": sp_t.get("best_ask_price",0), "mid": (sp_t.get("best_bid_price",0)+sp_t.get("best_ask_price",0))/2}
+                except Exception:
+                    pass
+            await self._manage_position(trade_id, eth, dvol)
+        await self._scout_entry(eth, dvol)
 
     def _get_todays_entry_window(self, today):
         """Random entry start between ENTRY_HOUR_UTC and ENTRY_HOUR_UTC_END-1.
@@ -181,11 +193,11 @@ class StrategyEngine:
             end_min  -= 60
         return start_hour, start_min, end_hour, end_min
 
-    async def _scout_entry(self, btc, dvol):
+    async def _scout_entry(self, eth, dvol):
         now_utc = datetime.now(timezone.utc)
         today   = now_utc.date()
         if self._last_trade_day == today: return
-        # also check DB for trades opened today (survives restarts)
+        # check DB for trades opened today (survives restarts)
         all_trades = db.get_all_trades()
         for t in all_trades:
             if t.get("status") == "OPEN":
@@ -193,9 +205,10 @@ class StrategyEngine:
                 if trade_date == today:
                     self._last_trade_day = today
                     return
+        sh, sm, eh, em = self._get_todays_entry_window(today)
         now_mins = now_utc.hour * 60 + now_utc.minute
-        window_start = ENTRY_HOUR_UTC * 60
-        window_end   = ENTRY_HOUR_UTC_END * 60
+        window_start = sh * 60 + sm
+        window_end   = eh * 60 + em
         if not (window_start <= now_mins < window_end): return
         if not (DVOL_MIN <= dvol <= DVOL_MAX):
             log.info(f"DVOL {dvol:.1f} outside range — skip")
@@ -209,8 +222,11 @@ class StrategyEngine:
         T = time_to_expiry_years(expiry_ts_ms)
         if T <= 0: return
 
-        short_call = find_strike_near_delta(btc, expiry_ts_ms, sigma, SHORT_DELTA, "call")
-        short_put  = find_strike_near_delta(btc, expiry_ts_ms, sigma, SHORT_DELTA, "put")
+        short_call = find_strike_near_delta(eth, expiry_ts_ms, sigma, SHORT_DELTA, "call")
+        short_put  = find_strike_near_delta(eth, expiry_ts_ms, sigma, SHORT_DELTA, "put")
+        wing_off   = round(round(eth * WING_WIDTH_PCT / 25) * 25, 0)
+        long_call  = short_call + wing_off
+        long_put   = short_put  - wing_off
 
         legs = [
             (short_call, "C", "sc"),
@@ -218,7 +234,7 @@ class StrategyEngine:
         ]
         tickers = {}
         for strike, otype, key in legs:
-            inst = f"BTC-{expiry_name}-{int(strike)}-{otype}"
+            inst = f"ETH-{expiry_name}-{int(strike)}-{otype}"
             t = await self._safe_ticker(inst)
             if t is None:
                 log.warning(f"No ticker for {inst} — skip")
@@ -238,8 +254,9 @@ class StrategyEngine:
                 log.info(f"Liquidity check failed: {reason} — skip")
                 return
 
-        sc_mid = sc_fill
-        sp_mid = sp_fill
+        # use mid price for entry orders (limit at mid)
+        sc_mid = self._executor.mid_price(tickers["sc"]) or sc_fill
+        sp_mid = self._executor.mid_price(tickers["sp"]) or sp_fill
 
         # net premium in ETH: receive sc+sp (no wings — strangle)
         net_eth = sc_mid + sp_mid
@@ -247,9 +264,10 @@ class StrategyEngine:
             log.info(f"Net premium ≤ 0 ({net_eth:.6f}) — skip")
             return
 
-        net_usd        = net_eth * btc
+        net_usd        = net_eth * eth
+        call_width_usd = (long_call  - short_call) * 1   # per 1 ETH contract
         # fixed 2 contracts always
-        contracts    = 0.1
+        contracts    = 2
 
         total_premium = net_usd * contracts
         tp_target     = total_premium * TAKE_PROFIT_PCT
@@ -259,12 +277,12 @@ class StrategyEngine:
 
         trade = {
             "open_time": time.time(), "status": "OPEN",
-            "eth_price_entry": btc,
+            "eth_price_entry": eth,
             "call_strike": short_call, "call_expiry": expiry_name,
-            "call_delta_entry": bs_delta(btc, short_call, T, sigma, "call"),
+            "call_delta_entry": bs_delta(eth, short_call, T, sigma, "call"),
             "call_premium": sc_mid,
             "put_strike": short_put, "put_expiry": expiry_name,
-            "put_delta_entry": bs_delta(btc, short_put, T, sigma, "put"),
+            "put_delta_entry": bs_delta(eth, short_put, T, sigma, "put"),
             "put_premium": sp_mid,
             "long_call_strike": None,
             "long_put_strike": None,
@@ -290,8 +308,8 @@ class StrategyEngine:
         self._last_trade_day = today
 
         msg = (
-            f"📋 *NEW BTC STRANGLE #{trade_id}*\n"
-            f"BTC @ ${btc:,.0f} | DVOL {dvol:.1f}\n"
+            f"📋 *NEW STRANGLE #{trade_id}*\n"
+            f"ETH @ ${eth:,.0f} | DVOL {dvol:.1f}\n"
             f"📉 Short put:  {int(short_put)}P\n"
             f"📈 Short call: {int(short_call)}C\n"
             f"💰 Net premium: ${total_premium:.2f} ({contracts}c)\n"
@@ -302,7 +320,7 @@ class StrategyEngine:
         log.info(f"Trade #{trade_id}: Strangle {int(short_put)}P/{int(short_call)}C net=${net_usd:.2f}")
         await self.telegram.send(msg)
 
-    async def _manage_position(self, trade_id, btc, dvol):
+    async def _manage_position(self, trade_id, eth, dvol):
         pos = self._open_positions.get(trade_id)
         if not pos: return
         T     = time_to_expiry_years(pos["expiry_ts_ms"])
@@ -310,10 +328,10 @@ class StrategyEngine:
         c     = pos["contracts"]
 
         # current BS value of each leg
-        sc_now = bs_price(btc, pos["short_call_strike"], T, sigma, "call")
-        lc_now = 0.0
-        sp_now = bs_price(btc, pos["short_put_strike"],  T, sigma, "put")
-        lp_now = 0.0
+        sc_now = bs_price(eth, pos["short_call_strike"], T, sigma, "call")
+        lc_now = bs_price(eth, pos["long_call_strike"],  T, sigma, "call")
+        sp_now = bs_price(eth, pos["short_put_strike"],  T, sigma, "put")
+        lp_now = bs_price(eth, pos["long_put_strike"],   T, sigma, "put")
 
         # fetch trade row from DB first (needed for entry premiums + SL threshold)
         trade_rows = db.get_all_trades()
@@ -321,10 +339,10 @@ class StrategyEngine:
         if t is None: return
 
         # entry values from DB (all 4 legs now stored)
-        sc_entry = pos.get("sc_entry_eth", t.get("call_premium", 0)) * btc
-        lc_entry = 0.0
-        sp_entry = pos.get("sp_entry_eth", t.get("put_premium", 0)) * btc
-        lp_entry = 0.0
+        sc_entry = pos.get("sc_entry_eth", t.get("call_premium", 0)) * eth
+        lc_entry = pos.get("lc_entry_eth", t.get("long_call_premium", 0)) * eth
+        sp_entry = pos.get("sp_entry_eth", t.get("put_premium", 0)) * eth
+        lp_entry = pos.get("lp_entry_eth", t.get("long_put_premium", 0)) * eth
 
         # P&L = (entry value sold - current value sold) + (current value bought - entry value bought)
         option_pnl = (
@@ -333,13 +351,14 @@ class StrategyEngine:
         ) * c
 
         if -option_pnl >= t["stop_loss_threshold"]:
-            await self._close(trade_id, btc, sc_now, sp_now, option_pnl, "CLOSED_SL")
+            await self._close(trade_id, eth, sc_now, sp_now, option_pnl, "CLOSED_SL")
         elif T <= 0:
-            await self._close(trade_id, btc, sc_now, sp_now, option_pnl, "CLOSED_EXPIRY")
-            log.warning(f"#{trade_id}: ETH {btc:.0f} breached wing — emergency close")
-            await self._close(trade_id, btc, sc_now, sp_now, option_pnl, "CLOSED_SL")
+            await self._close(trade_id, eth, sc_now, sp_now, option_pnl, "CLOSED_EXPIRY")
+        elif eth >= pos["long_call_strike"] or eth <= pos["long_put_strike"]:
+            log.warning(f"#{trade_id}: ETH {eth:.0f} breached wing — emergency close")
+            await self._close(trade_id, eth, sc_now, sp_now, option_pnl, "CLOSED_SL")
 
-    async def _close(self, trade_id, btc, sc_now, sp_now, option_pnl, status):
+    async def _close(self, trade_id, eth, sc_now, sp_now, option_pnl, status):
         pos = self._open_positions.pop(trade_id, None)
         if not pos: return
         slippage  = 0.0  # bid/ask fills already account for slippage at entry
@@ -347,14 +366,14 @@ class StrategyEngine:
         pnl_pct   = total_pnl / PAPER_CAPITAL_USD
         db.update_trade(trade_id, {
             "status": status, "close_time": time.time(),
-            "eth_price_exit": btc, "call_premium_exit": sc_now, "put_premium_exit": sp_now,
+            "eth_price_exit": eth, "call_premium_exit": sc_now, "put_premium_exit": sp_now,
             "option_pnl_usd": option_pnl, "hedge_pnl_usd": 0.0,
             "total_pnl_usd": total_pnl, "pnl_pct": pnl_pct,
         })
         emoji = {"CLOSED_TP": "✅", "CLOSED_SL": "🛑", "CLOSED_EXPIRY": "⏰"}.get(status, "📊")
         msg = (
             f"{emoji} *TRADE #{trade_id} CLOSED — {status}*\n"
-            f"BTC @ ${btc:,.0f}\n"
+            f"ETH @ ${eth:,.0f}\n"
             f"📊 Option P&L: ${option_pnl:.2f}\n"
             f"💸 Slippage: -${slippage:.2f}\n"
             f"{'🟢' if total_pnl >= 0 else '🔴'} *Net: ${total_pnl:.2f} ({pnl_pct:.2%})*"
