@@ -241,7 +241,7 @@ class StrategyEngine:
 
         net_usd        = net_eth * btc
         # fixed 2 contracts always
-        contracts    = 2
+        contracts    = 0.1
 
         total_premium = net_usd * contracts
         tp_target     = total_premium * TAKE_PROFIT_PCT
