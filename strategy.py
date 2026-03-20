@@ -151,7 +151,7 @@ class StrategyEngine:
             await asyncio.sleep(30)
 
     async def _tick(self):
-        eth = self.client._eth_price
+        eth = self.client._btc_price
         dvol = self.client._dvol
         if eth is None or dvol is None:
             log.debug("Waiting for market data...")
