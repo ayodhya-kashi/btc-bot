@@ -168,10 +168,19 @@ class StrategyEngine:
                 sc_strike = int(pos.get("short_call_strike", 0))
                 sp_strike = int(pos.get("short_put_strike", 0))
                 try:
+                    expiry = pos.get("expiry_label", "")
+                    if not expiry:
+                        trades = db.get_all_trades()
+                        tr = next((x for x in trades if x["id"] == trade_id), {})
+                        expiry = tr.get("call_expiry", "")
                     sc_t = await self.client.get_ticker(f"BTC-{expiry}-{sc_strike}-C")
                     sp_t = await self.client.get_ticker(f"BTC-{expiry}-{sp_strike}-P")
-                    pos["live_sc"] = {"bid": sc_t.get("best_bid_price",0), "ask": sc_t.get("best_ask_price",0), "mid": (sc_t.get("best_bid_price",0)+sc_t.get("best_ask_price",0))/2}
-                    pos["live_sp"] = {"bid": sp_t.get("best_bid_price",0), "ask": sp_t.get("best_ask_price",0), "mid": (sp_t.get("best_bid_price",0)+sp_t.get("best_ask_price",0))/2}
+                    sc_bid = sc_t.get("best_bid_price",0) or 0
+                    sc_ask = sc_t.get("best_ask_price",0) or 0
+                    sp_bid = sp_t.get("best_bid_price",0) or 0
+                    sp_ask = sp_t.get("best_ask_price",0) or 0
+                    pos["live_sc"] = {"bid": sc_bid, "ask": sc_ask, "mid": (sc_bid+sc_ask)/2 if sc_bid and sc_ask else sc_ask/2 if sc_ask else 0}
+                    pos["live_sp"] = {"bid": sp_bid, "ask": sp_ask, "mid": (sp_bid+sp_ask)/2 if sp_bid and sp_ask else sp_ask/2 if sp_ask else 0}
                 except Exception:
                     pass
             await self._manage_position(trade_id, eth, dvol)
