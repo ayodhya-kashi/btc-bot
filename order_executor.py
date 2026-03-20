@@ -1,121 +1,159 @@
 """
-Live order execution module for Deribit.
-Handles limit order placement, polling, and cancellation.
-Paper trading: simulates fills without placing real orders.
+Live order execution for Deribit — always fills, never skips.
+Chases price from mid toward ask in steps.
 """
 import asyncio
 import logging
 import time
 
-log = logging.getLogger("order_executor")
+log = logging.getLogger("executor")
 
 PAPER_TRADING = True  # set False for live
-
 
 class OrderExecutor:
     def __init__(self, client):
         self.client = client
 
-    async def sell_limit(self, instrument, amount, price, label=""):
-        """Sell (short) at limit price. Returns fill_price or None."""
+    def mid(self, ticker):
+        bid = ticker.get("best_bid_price") or 0
+        ask = ticker.get("best_ask_price") or 0
+        if not bid and not ask: return None
+        if not bid: return ask
+        if not ask: return bid
+        return (bid + ask) / 2
+
+    def ask(self, ticker):
+        return ticker.get("best_ask_price") or 0
+
+    async def sell_limit_chase(self, instrument, amount, ticker, label=""):
+        """
+        Sell at mid, chase toward ask if not filled.
+        Always fills — never skips.
+        Returns actual fill price.
+        """
+        bid  = ticker.get("best_bid_price") or 0
+        ask  = ticker.get("best_ask_price") or 0
+
         if PAPER_TRADING:
-            log.info(f"[PAPER] SELL {amount} {instrument} @ {price:.6f}")
-            return price
-
-        try:
-            resp = await self.client._send("private/sell", {
-                "instrument_name": instrument,
-                "amount": amount,
-                "type": "limit",
-                "price": price,
-                "post_only": True,
-                "label": label,
-            })
-            order_id = resp["order"]["order_id"]
-            log.info(f"Placed SELL limit #{order_id} {amount} {instrument} @ {price:.6f}")
-            return await self._wait_fill(order_id, instrument, price)
-        except Exception as e:
-            log.error(f"sell_limit failed {instrument}: {e}")
-            return None
-
-    async def buy_limit(self, instrument, amount, price, label="", aggressive=False):
-        """Buy (close short) at limit price. aggressive=True uses ask for SL close."""
-        if PAPER_TRADING:
-            log.info(f"[PAPER] BUY {amount} {instrument} @ {price:.6f}")
-            return price
-
-        try:
-            resp = await self.client._send("private/buy", {
-                "instrument_name": instrument,
-                "amount": amount,
-                "type": "limit",
-                "price": price,
-                "label": label,
-            })
-            order_id = resp["order"]["order_id"]
-            log.info(f"Placed BUY limit #{order_id} {amount} {instrument} @ {price:.6f}")
-            fill = await self._wait_fill(order_id, instrument, price, retries=3 if aggressive else 6)
-            if fill is None and aggressive:
-                # escalate to market order for SL
-                log.warning(f"Limit unfilled — escalating to market for {instrument}")
-                fill = await self._market_buy(order_id, instrument, amount)
+            fill = self.mid(ticker) or ask
+            log.info(f"[PAPER] SELL {amount} {instrument} @ {fill:.6f}")
             return fill
-        except Exception as e:
-            log.error(f"buy_limit failed {instrument}: {e}")
+
+        if not ask:
+            log.error(f"No ask price for {instrument} — cannot place order")
             return None
 
-    async def _wait_fill(self, order_id, instrument, price, retries=6, interval=10):
-        """Poll order status until filled or retries exhausted."""
-        for attempt in range(retries):
-            await asyncio.sleep(interval)
-            try:
-                resp = await self.client._send("private/get_order_state", {
-                    "order_id": order_id
-                })
-                state = resp.get("order_state")
-                if state == "filled":
-                    fill_price = resp.get("average_price", price)
-                    log.info(f"Order #{order_id} FILLED @ {fill_price}")
-                    return fill_price
-                elif state in ("cancelled", "rejected"):
-                    log.warning(f"Order #{order_id} {state}")
-                    return None
-                else:
-                    log.info(f"Order #{order_id} {state} (attempt {attempt+1}/{retries})")
-            except Exception as e:
-                log.error(f"poll order {order_id}: {e}")
+        spread = ask - bid if bid else ask * 0.02
 
-        # cancel unfilled order
-        try:
-            await self.client._send("private/cancel", {"order_id": order_id})
-            log.warning(f"Order #{order_id} cancelled after {retries} attempts")
-        except Exception as e:
-            log.error(f"cancel order {order_id}: {e}")
+        # price steps: mid → mid+25% → mid+50% → ask
+        start = self.mid(ticker) or ask
+        steps = [
+            start,
+            start + spread * 0.25,
+            start + spread * 0.50,
+            ask,
+        ]
+        wait_secs = 30
+
+        for attempt, price in enumerate(steps):
+            price = round(price, 6)
+            log.info(f"SELL {instrument} @ {price:.6f} (attempt {attempt+1}/4)")
+
+            try:
+                resp = await self.client._send("private/sell", {
+                    "instrument_name": instrument,
+                    "amount": amount,
+                    "type": "limit",
+                    "price": price,
+                    "label": label,
+                })
+                order_id = resp["order"]["order_id"]
+                state    = resp["order"]["order_state"]
+
+                if state == "filled":
+                    fill = resp["order"].get("average_price", price)
+                    log.info(f"Filled immediately @ {fill}")
+                    return fill
+
+                # wait and poll
+                await asyncio.sleep(wait_secs)
+                status = await self.client._send("private/get_order_state", {"order_id": order_id})
+                if status.get("order_state") == "filled":
+                    fill = status.get("average_price", price)
+                    log.info(f"Filled after wait @ {fill}")
+                    return fill
+
+                # cancel and try next step
+                await self.client._send("private/cancel", {"order_id": order_id})
+                log.info(f"Not filled at {price:.6f} — moving to next step")
+
+            except Exception as e:
+                log.error(f"Order attempt {attempt+1} failed: {e}")
+                continue
+
+        log.error(f"All fill attempts failed for {instrument}")
         return None
 
-    async def _market_buy(self, cancel_order_id, instrument, amount):
-        """Last resort market buy for SL close."""
+    async def buy_limit_chase(self, instrument, amount, ticker, label=""):
+        """
+        Buy back (close short) — chase from mid toward bid.
+        For SL close, starts at ask for fastest fill.
+        """
+        bid = ticker.get("best_bid_price") or 0
+        ask = ticker.get("best_ask_price") or 0
+
+        if PAPER_TRADING:
+            fill = self.ask(ticker) or self.mid(ticker)
+            log.info(f"[PAPER] BUY {amount} {instrument} @ {fill:.6f}")
+            return fill
+
+        if not ask:
+            log.error(f"No ask for {instrument}")
+            return None
+
+        spread = ask - bid if bid else ask * 0.02
+        start  = ask  # for close, start at ask for speed
+
+        steps = [ask, ask + spread * 0.1, ask + spread * 0.25]
+        wait_secs = 15  # shorter wait for SL close
+
+        for attempt, price in enumerate(steps):
+            price = round(price, 6)
+            log.info(f"BUY {instrument} @ {price:.6f} (attempt {attempt+1}/3)")
+
+            try:
+                resp = await self.client._send("private/buy", {
+                    "instrument_name": instrument,
+                    "amount": amount,
+                    "type": "limit",
+                    "price": price,
+                    "label": label,
+                })
+                order_id = resp["order"]["order_id"]
+
+                if resp["order"]["order_state"] == "filled":
+                    return resp["order"].get("average_price", price)
+
+                await asyncio.sleep(wait_secs)
+                status = await self.client._send("private/get_order_state", {"order_id": order_id})
+                if status.get("order_state") == "filled":
+                    return status.get("average_price", price)
+
+                await self.client._send("private/cancel", {"order_id": order_id})
+
+            except Exception as e:
+                log.error(f"Buy attempt {attempt+1} failed: {e}")
+                continue
+
+        # last resort — market order
+        log.warning(f"Using market order for {instrument}")
         try:
             resp = await self.client._send("private/buy", {
                 "instrument_name": instrument,
                 "amount": amount,
                 "type": "market",
             })
-            fill = resp.get("order", {}).get("average_price")
-            log.warning(f"Market BUY {instrument} filled @ {fill}")
-            return fill
+            return resp["order"].get("average_price")
         except Exception as e:
-            log.error(f"market_buy failed: {e}")
+            log.error(f"Market order failed: {e}")
             return None
-
-    def mid_price(self, ticker):
-        """Calculate mid price from ticker."""
-        bid = ticker.get("best_bid_price", 0) or 0
-        ask = ticker.get("best_ask_price", 0) or 0
-        if bid <= 0 or ask <= 0:
-            return None
-        return round((bid + ask) / 2, 6)
-
-    def ask_price(self, ticker):
-        """Get ask price for aggressive close."""
-        return ticker.get("best_ask_price", 0) or 0

@@ -326,6 +326,20 @@ class StrategyEngine:
             f"🛑 SL: ${sl_threshold:.2f}\n"
             f"⏰ Expiry {expiry_name} 08:00 UTC"
         )
+        sc_expiry_inst = f"BTC-{expiry_name}-{int(short_call)}-C"
+        sp_expiry_inst = f"BTC-{expiry_name}-{int(short_put)}-P"
+        sc_fill_price = await self._executor.sell_limit_chase(sc_expiry_inst, contracts, tickers["sc"], label=f"sc_{trade_id}")
+        sp_fill_price = await self._executor.sell_limit_chase(sp_expiry_inst, contracts, tickers["sp"], label=f"sp_{trade_id}")
+
+        if sc_fill_price is None or sp_fill_price is None:
+            log.error(f"Failed to fill both legs for trade #{trade_id} — skipping")
+            return
+
+        sc_mid = sc_fill_price
+        sp_mid = sp_fill_price
+        net_eth = sc_mid + sp_mid
+        net_usd = net_eth * btc
+
         log.info(f"Trade #{trade_id}: Strangle {int(short_put)}P/{int(short_call)}C net=${net_usd:.2f}")
         await self.telegram.send(msg)
 
