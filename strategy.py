@@ -243,7 +243,7 @@ class StrategyEngine:
         ]
         tickers = {}
         for strike, otype, key in legs:
-            inst = f"ETH-{expiry_name}-{int(strike)}-{otype}"
+            inst = f"BTC-{expiry_name}-{int(strike)}-{otype}"
             t = await self._safe_ticker(inst)
             if t is None:
                 log.warning(f"No ticker for {inst} — skip")
