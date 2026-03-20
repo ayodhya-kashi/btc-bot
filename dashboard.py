@@ -22,7 +22,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ETH Paper Trading Bot</title>
+<title>BTC Paper Trading Bot</title>
 <style>
   :root {
     --bg: #0d1117; --surface: #161b22; --border: #30363d;
@@ -68,7 +68,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <h1><span class="live-dot"></span>ETH Paper Bot — Strangle</h1>
+  <h1><span class="live-dot"></span>BTC Paper Bot — Strangle</h1>
   <span id="last-update">–</span>
 </header>
 <div class="container">

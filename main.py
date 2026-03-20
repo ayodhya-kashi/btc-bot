@@ -47,7 +47,7 @@ async def daily_summary_loop(telegram: TelegramNotifier):
 async def main():
     setup_logging()
     log.info("=" * 60)
-    log.info("  ETH Deribit Paper Bot starting up")
+    log.info("  BTC Deribit Paper Bot starting up")
     log.info("=" * 60)
 
     # init database
