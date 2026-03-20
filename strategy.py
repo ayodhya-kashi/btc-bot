@@ -58,7 +58,7 @@ def find_strike_near_delta(S, expiry_ts_ms, sigma, target_delta, option_type):
         else:
             if abs(d) < target_delta: lo = mid
             else: hi = mid
-    return round(round((lo + hi) / 2 / 25) * 25, 0)
+    return round(round((lo + hi) / 2 / 1000) * 1000, 0)
 
 def check_liquidity(ticker, role):
     """
@@ -78,8 +78,8 @@ def check_liquidity(ticker, role):
     spread_pct = (ask - bid) / mid
     if spread_pct > 0.30:
         return 0, False, f"{role}: spread {spread_pct:.0%} > 30%"
-    if role in ("sc", "sp") and bsz < 5:
-        return 0, False, f"{role}: bid size {bsz} < 5 contracts"
+    if role in ("sc", "sp") and bsz < 0.75:
+        return 0, False, f"{role}: bid size {bsz} < 0.75 contracts"
     if role in ("lc", "lp") and asz < 5:
         return 0, False, f"{role}: ask size {asz} < 5 contracts"
 
@@ -99,6 +99,8 @@ class StrategyEngine:
         self.telegram = telegram
         self._open_positions = {}
         self._last_trade_day = None
+        from order_executor import OrderExecutor
+        self._executor = OrderExecutor(self.client)
         self._running = False
 
     def _expiry_label_to_ts(self, label):
@@ -154,8 +156,9 @@ class StrategyEngine:
         eth = self.client._btc_price
         dvol = self.client._dvol
         if eth is None or dvol is None:
-            log.debug("Waiting for market data...")
+            log.warning(f"Waiting for market data: btc={eth} dvol={dvol}")
             return
+        log.info(f"Tick: BTC={eth:.0f} DVOL={dvol:.1f}")
         db.upsert_snapshot({
             "ts": time.time(), "eth_price": eth, "dvol": dvol,
             "eth_iv_atm": dvol / 100.0,
@@ -214,10 +217,9 @@ class StrategyEngine:
                 if trade_date == today:
                     self._last_trade_day = today
                     return
-        sh, sm, eh, em = self._get_todays_entry_window(today)
         now_mins = now_utc.hour * 60 + now_utc.minute
-        window_start = sh * 60 + sm
-        window_end   = eh * 60 + em
+        window_start = ENTRY_HOUR_UTC * 60
+        window_end   = ENTRY_HOUR_UTC_END * 60
         if not (window_start <= now_mins < window_end): return
         if not (DVOL_MIN <= dvol <= DVOL_MAX):
             log.info(f"DVOL {dvol:.1f} outside range — skip")
@@ -233,9 +235,6 @@ class StrategyEngine:
 
         short_call = find_strike_near_delta(eth, expiry_ts_ms, sigma, SHORT_DELTA, "call")
         short_put  = find_strike_near_delta(eth, expiry_ts_ms, sigma, SHORT_DELTA, "put")
-        wing_off   = round(round(eth * WING_WIDTH_PCT / 25) * 25, 0)
-        long_call  = short_call + wing_off
-        long_put   = short_put  - wing_off
 
         legs = [
             (short_call, "C", "sc"),
@@ -264,8 +263,8 @@ class StrategyEngine:
                 return
 
         # use mid price for entry orders (limit at mid)
-        sc_mid = self._executor.mid_price(tickers["sc"]) or sc_fill
-        sp_mid = self._executor.mid_price(tickers["sp"]) or sp_fill
+        sc_mid = self._executor.mid(tickers["sc"]) or sc_fill
+        sp_mid = self._executor.mid(tickers["sp"]) or sp_fill
 
         # net premium in ETH: receive sc+sp (no wings — strangle)
         net_eth = sc_mid + sp_mid
@@ -274,9 +273,8 @@ class StrategyEngine:
             return
 
         net_usd        = net_eth * eth
-        call_width_usd = (long_call  - short_call) * 1   # per 1 ETH contract
         # fixed 2 contracts always
-        contracts    = 2
+        contracts    = 0.1
 
         total_premium = net_usd * contracts
         tp_target     = total_premium * TAKE_PROFIT_PCT
@@ -338,7 +336,7 @@ class StrategyEngine:
         sc_mid = sc_fill_price
         sp_mid = sp_fill_price
         net_eth = sc_mid + sp_mid
-        net_usd = net_eth * btc
+        net_usd = net_eth * eth
 
         log.info(f"Trade #{trade_id}: Strangle {int(short_put)}P/{int(short_call)}C net=${net_usd:.2f}")
         await self.telegram.send(msg)
