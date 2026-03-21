@@ -136,6 +136,7 @@ class StrategyEngine:
                 "call_spread_width": call_width,
                 "put_spread_width":  put_width,
                 "net_premium_usd":   t["total_premium_collected"] / contracts,
+                "expiry_label":      t.get("call_expiry", ""),
             }
             log.info(f"Recovered trade #{t['id']}: IC {int(t['put_strike'])}P/{int(t['call_strike'])}C")
         if open_trades:
