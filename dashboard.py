@@ -363,17 +363,17 @@ def api_state():
                 t["legs"] = [
                     {
                         "name": "Short call",
-                        "entry_usd": t.get("call_premium", 0) * eth_p * c,
-                        "bid_usd": ps.get("live_sc", {}).get("bid", 0) * eth_p * c,
-                        "ask_usd": ps.get("live_sc", {}).get("ask", 0) * eth_p * c,
-                        "mid_usd": ps.get("live_sc", {}).get("mid", 0) * eth_p * c,
+                        "entry_usd": t.get("call_premium", 0) * eth_p,
+                        "bid_usd": ps.get("live_sc", {}).get("bid", 0) * eth_p,
+                        "ask_usd": ps.get("live_sc", {}).get("ask", 0) * eth_p,
+                        "mid_usd": ps.get("live_sc", {}).get("mid", 0) * eth_p,
                     },
                     {
                         "name": "Short put",
-                        "entry_usd": t.get("put_premium", 0) * eth_p * c,
-                        "bid_usd": ps.get("live_sp", {}).get("bid", 0) * eth_p * c,
-                        "ask_usd": ps.get("live_sp", {}).get("ask", 0) * eth_p * c,
-                        "mid_usd": ps.get("live_sp", {}).get("mid", 0) * eth_p * c,
+                        "entry_usd": t.get("put_premium", 0) * eth_p,
+                        "bid_usd": ps.get("live_sp", {}).get("bid", 0) * eth_p,
+                        "ask_usd": ps.get("live_sp", {}).get("ask", 0) * eth_p,
+                        "mid_usd": ps.get("live_sp", {}).get("mid", 0) * eth_p,
                     }
                 ]
 
