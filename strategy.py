@@ -339,11 +339,11 @@ class StrategyEngine:
         )
         sc_expiry_inst = f"BTC-{expiry_name}-{int(short_call)}-C"
         sp_expiry_inst = f"BTC-{expiry_name}-{int(short_put)}-P"
-        sc_fill_price = await self._executor.sell_limit_chase(sc_expiry_inst, contracts, tickers["sc"], label=f"sc_{trade_id}")
-        sp_fill_price = await self._executor.sell_limit_chase(sp_expiry_inst, contracts, tickers["sp"], label=f"sp_{trade_id}")
-
-        if sc_fill_price is None or sp_fill_price is None:
-            log.error(f"Failed to fill both legs for trade #{trade_id} — skipping")
+        sp_fill_price, sc_fill_price = await self._executor.sell_strangle(
+            sp_expiry_inst, sc_expiry_inst, contracts, tickers["sp"], tickers["sc"]
+        )
+        if sp_fill_price is None or sc_fill_price is None:
+            log.error(f"Strangle entry failed for trade #{trade_id} — no position")
             return
 
         sc_mid = sc_fill_price
