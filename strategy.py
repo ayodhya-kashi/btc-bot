@@ -165,6 +165,7 @@ class StrategyEngine:
             "eth_iv_atm": dvol / 100.0,
             "bid_ask_spread_perp": self._get_perp_spread(),
         })
+        log.info(f"Open positions in memory: {list(self._open_positions.keys())}")
         for trade_id in list(self._open_positions.keys()):
             pos = self._open_positions.get(trade_id)
             if pos:
@@ -177,16 +178,27 @@ class StrategyEngine:
                         trades = db.get_all_trades()
                         tr = next((x for x in trades if x["id"] == trade_id), {})
                         expiry = tr.get("call_expiry", "")
-                    sc_t = await self.client.get_ticker(f"BTC-{expiry}-{sc_strike}-C")
-                    sp_t = await self.client.get_ticker(f"BTC-{expiry}-{sp_strike}-P")
-                    sc_bid = sc_t.get("best_bid_price",0) or 0
-                    sc_ask = sc_t.get("best_ask_price",0) or 0
-                    sp_bid = sp_t.get("best_bid_price",0) or 0
-                    sp_ask = sp_t.get("best_ask_price",0) or 0
-                    pos["live_sc"] = {"bid": sc_bid, "ask": sc_ask, "mid": (sc_bid+sc_ask)/2 if sc_bid and sc_ask else sc_ask/2 if sc_ask else 0}
-                    pos["live_sp"] = {"bid": sp_bid, "ask": sp_ask, "mid": (sp_bid+sp_ask)/2 if sp_bid and sp_ask else sp_ask/2 if sp_ask else 0}
-                except Exception:
-                    pass
+                    sc_inst = f"BTC-{expiry}-{sc_strike}-C"
+                    sp_inst = f"BTC-{expiry}-{sp_strike}-P"
+                    log.info(f"Fetching live tickers: {sc_inst} / {sp_inst}")
+                    sc_t = await self.client.get_ticker(sc_inst)
+                    sp_t = await self.client.get_ticker(sp_inst)
+                    if sc_t is None or sp_t is None:
+                        log.error(f"Live ticker returned None — sc_t={sc_t} sp_t={sp_t} (instruments: {sc_inst}, {sp_inst})")
+                    else:
+                        sc_bid = sc_t.get("best_bid_price", 0) or 0
+                        sc_ask = sc_t.get("best_ask_price", 0) or 0
+                        sp_bid = sp_t.get("best_bid_price", 0) or 0
+                        sp_ask = sp_t.get("best_ask_price", 0) or 0
+                        log.info(f"Live {sc_inst}: bid={sc_bid} ask={sc_ask} | {sp_inst}: bid={sp_bid} ask={sp_ask}")
+                        if sc_bid == 0 and sc_ask == 0:
+                            log.warning(f"Live ticker {sc_inst} returned zero bid/ask — no market quotes")
+                        if sp_bid == 0 and sp_ask == 0:
+                            log.warning(f"Live ticker {sp_inst} returned zero bid/ask — no market quotes")
+                        pos["live_sc"] = {"bid": sc_bid, "ask": sc_ask, "mid": (sc_bid + sc_ask) / 2 if sc_bid and sc_ask else sc_ask / 2 if sc_ask else 0}
+                        pos["live_sp"] = {"bid": sp_bid, "ask": sp_ask, "mid": (sp_bid + sp_ask) / 2 if sp_bid and sp_ask else sp_ask / 2 if sp_ask else 0}
+                except Exception as e:
+                    log.error(f"Live ticker fetch failed for trade #{trade_id} ({expiry} {sc_strike}C/{sp_strike}P): {e}", exc_info=True)
             await self._manage_position(trade_id, eth, dvol)
         await self._scout_entry(eth, dvol)
 

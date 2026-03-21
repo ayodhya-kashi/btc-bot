@@ -95,7 +95,7 @@ class DeribitClient:
         await self._send_and_drain("public/subscribe", {"channels": [
             "deribit_price_index.btc_usd",
             "deribit_volatility_index.btc_usd",
-            "book.ETH-PERPETUAL.none.20.100ms",
+            "book.BTC-PERPETUAL.none.20.100ms",
         ]})
         log.info("Subscribed to base channels")
 
@@ -146,7 +146,7 @@ class DeribitClient:
 
     async def get_instruments(self, kind="option", expired=False):
         return await self._send("public/get_instruments", {
-            "currency": "ETH", "kind": kind, "expired": expired,
+            "currency": "BTC", "kind": kind, "expired": expired,
         })
 
     async def get_ticker(self, instrument):
