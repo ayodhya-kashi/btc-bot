@@ -76,8 +76,8 @@ def check_liquidity(ticker, role):
         return 0, False, f"{role}: zero bid/ask"
     mid = (bid + ask) / 2
     spread_pct = (ask - bid) / mid
-    if spread_pct > 0.30:
-        return 0, False, f"{role}: spread {spread_pct:.0%} > 30%"
+    if spread_pct > 0.60:
+        return 0, False, f"{role}: spread {spread_pct:.0%} > 60%"
     if role in ("sc", "sp") and bsz < 0.75:
         return 0, False, f"{role}: bid size {bsz} < 0.75 contracts"
     if role in ("lc", "lp") and asz < 5:
@@ -276,7 +276,7 @@ class StrategyEngine:
         # fixed 2 contracts always
         contracts    = 0.1
 
-        total_premium = net_usd * contracts
+        total_premium = net_usd
         tp_target     = total_premium * TAKE_PROFIT_PCT
         sl_threshold  = total_premium * STOP_LOSS_MULT
         be_up         = short_call + net_usd
