@@ -236,3 +236,97 @@ class OrderExecutor:
 
     def ask(self, ticker):
         return ticker.get("best_ask_price") or 0
+
+    async def sell_strangle_with_deadline(self, sp_inst, sc_inst, amount, sp_ticker, sc_ticker, deadline=None):
+        """sell_strangle but with a 120-min deadline from first fill."""
+        import time
+        log.info(f"Entering strangle: {sp_inst} + {sc_inst} x {amount}")
+        sp_fill = await self._sell_leg(sp_inst, amount, sp_ticker)
+        if sp_fill is None:
+            log.error("Put leg failed — skipping day")
+            return None, None
+        log.info(f"Put filled @ {sp_fill:.4f}")
+        # set deadline from first fill
+        fill_deadline = time.time() + 120 * 60
+        sc_fill = await self._sell_leg_with_deadline(sc_inst, amount, sc_ticker, fill_deadline)
+        if sc_fill is None:
+            log.warning("Call leg failed — closing put to stay flat")
+            await self._close_leg(sp_inst, amount, sp_ticker)
+            return None, None
+        log.info(f"Call filled @ {sc_fill:.4f}")
+        return sp_fill, sc_fill
+
+    async def _sell_leg_with_deadline(self, instrument, amount, ticker, deadline):
+        """Like _sell_leg but stops if deadline exceeded."""
+        import time
+        bid = ticker.get("best_bid_price") or 0
+        ask = ticker.get("best_ask_price") or 0
+        if not bid or not ask:
+            return None
+        if PAPER_TRADING:
+            fill = round_tick((bid + ask) / 2)
+            log.info(f"[PAPER] SELL {amount} {instrument} @ {fill:.4f}")
+            return fill
+        for attempt in range(1, MAX_ATTEMPTS + 1):
+            if time.time() > deadline:
+                log.warning(f"{instrument}: 120-min deadline exceeded — giving up")
+                return None
+            result = await self._single_attempt(instrument, amount, ticker, attempt)
+            if result is not None:
+                return result
+            if attempt < MAX_ATTEMPTS:
+                if time.time() + WAIT_MINUTES * 60 > deadline:
+                    log.warning(f"{instrument}: not enough time for retry — closing put")
+                    return None
+                await asyncio.sleep(WAIT_MINUTES * 60)
+        return None
+
+    async def _single_attempt(self, instrument, amount, ticker, attempt_num):
+        """One 20-min attempt to fill a sell order."""
+        try:
+            t = await self.client.get_ticker(instrument)
+            bid = t.get("best_bid_price") or 0
+            ask = t.get("best_ask_price") or 0
+            if not bid or not ask:
+                return None
+        except Exception as e:
+            log.error(f"Ticker: {e}")
+            return None
+        initial_bid = bid
+        sp = spread_pct(bid, ask)
+        our_price = round_tick((bid+ask)/2) if sp <= TIGHT_SPREAD else round_tick(ask * START_BELOW)
+        our_price = max(our_price, round_tick(bid * MIN_BID_BUFFER))
+        log.info(f"Attempt {attempt_num}: {instrument} spread={sp:.0%} price={our_price:.4f}")
+        order_id = await self._place_sell(instrument, amount, our_price)
+        if order_id is None:
+            return None
+        elapsed = 0
+        while elapsed < HOLD_MINUTES * 60:
+            await asyncio.sleep(CHECK_INTERVAL)
+            elapsed += CHECK_INTERVAL
+            state = await self._order_state(order_id)
+            if state == "filled":
+                fp = await self._fill_price(order_id)
+                log.info(f"{instrument}: filled @ {fp:.4f}")
+                return fp
+            try:
+                t = await self.client.get_ticker(instrument)
+                new_bid = t.get("best_bid_price") or 0
+                new_ask = t.get("best_ask_price") or 0
+            except Exception:
+                continue
+            if new_bid < initial_bid * BID_DROP_THRESHOLD:
+                log.warning(f"{instrument}: bid dropped — cancel")
+                await self._cancel(order_id)
+                return None
+            if new_ask < our_price and new_ask > new_bid * MIN_BID_BUFFER:
+                new_price = max(round_tick(new_ask * START_BELOW), round_tick(new_bid * MIN_BID_BUFFER))
+                if new_price != our_price:
+                    log.info(f"{instrument}: undercut → {new_price:.4f}")
+                    await self._cancel(order_id)
+                    our_price = new_price
+                    order_id = await self._place_sell(instrument, amount, our_price)
+                    if order_id is None:
+                        return None
+        await self._cancel(order_id)
+        return None

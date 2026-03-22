@@ -339,12 +339,16 @@ class StrategyEngine:
         )
         sc_expiry_inst = f"BTC-{expiry_name}-{int(short_call)}-C"
         sp_expiry_inst = f"BTC-{expiry_name}-{int(short_put)}-P"
-        sp_fill_price, sc_fill_price = await self._executor.sell_strangle(
+        import time as _time
+        self._entry_deadline = _time.time() + 120 * 60
+        sp_fill_price, sc_fill_price = await self._executor.sell_strangle_with_deadline(
             sp_expiry_inst, sc_expiry_inst, contracts, tickers["sp"], tickers["sc"]
         )
         if sp_fill_price is None or sc_fill_price is None:
             log.error(f"Strangle entry failed for trade #{trade_id} — no position")
+            self._entry_deadline = None
             return
+        self._entry_deadline = None
 
         sc_mid = sc_fill_price
         sp_mid = sp_fill_price
