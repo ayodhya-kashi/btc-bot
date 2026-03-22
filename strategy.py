@@ -388,9 +388,7 @@ class StrategyEngine:
             await self._close(trade_id, eth, sc_now, sp_now, option_pnl, "CLOSED_SL")
         elif T <= 0:
             await self._close(trade_id, eth, sc_now, sp_now, option_pnl, "CLOSED_EXPIRY")
-        elif eth >= pos["long_call_strike"] or eth <= pos["long_put_strike"]:
-            log.warning(f"#{trade_id}: ETH {eth:.0f} breached wing — emergency close")
-            await self._close(trade_id, eth, sc_now, sp_now, option_pnl, "CLOSED_SL")
+
 
     async def _close(self, trade_id, eth, sc_now, sp_now, option_pnl, status):
         pos = self._open_positions.pop(trade_id, None)
