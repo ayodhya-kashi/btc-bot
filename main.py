@@ -24,8 +24,14 @@ def setup_logging():
     fh.setFormatter(fmt)
     root.addHandler(fh)
 
+
+    class _NoWerkzeugInfo(logging.Filter):
+        def filter(self, record):
+            return not (record.name == "werkzeug" and record.levelno < logging.WARNING)
+
     sh = logging.StreamHandler(sys.stdout)
     sh.setFormatter(fmt)
+    sh.addFilter(_NoWerkzeugInfo())
     root.addHandler(sh)
 
 log = logging.getLogger("main")

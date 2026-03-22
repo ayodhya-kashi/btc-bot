@@ -11,8 +11,7 @@ from statistics import NormalDist
 import db
 from config import (
     DVOL_MIN, DVOL_MAX,
-    ENTRY_HOUR_UTC, ENTRY_HOUR_UTC_END,
-    TAKE_PROFIT_PCT, STOP_LOSS_MULT,
+    ENTRY_HOUR_UTC, ENTRY_HOUR_UTC_END, STOP_LOSS_MULT,
     SLIPPAGE_OPTIONS_PCT,
     PAPER_CAPITAL_USD, MAX_RISK_PER_TRADE,
     SHORT_DELTA, WING_WIDTH_PCT,
@@ -137,6 +136,8 @@ class StrategyEngine:
                 "put_spread_width":  put_width,
                 "net_premium_usd":   t["total_premium_collected"] / contracts,
                 "expiry_label":      t.get("call_expiry", ""),
+                "sc_entry_eth":      t.get("call_premium", 0),
+                "sp_entry_eth":      t.get("put_premium",  0),
             }
             log.info(f"Recovered trade #{t['id']}: IC {int(t['put_strike'])}P/{int(t['call_strike'])}C")
         if open_trades:
@@ -289,8 +290,7 @@ class StrategyEngine:
         # fixed 2 contracts always
         contracts    = 0.1
 
-        total_premium = net_usd
-        tp_target     = total_premium * TAKE_PROFIT_PCT
+        total_premium = net_usd * contracts
         sl_threshold  = total_premium * STOP_LOSS_MULT
         be_up         = short_call + net_usd
         be_dn         = short_put  - net_usd
@@ -309,7 +309,6 @@ class StrategyEngine:
             "long_call_premium": 0.0,
             "long_put_premium": 0.0,
             "total_premium_collected": total_premium,
-            "take_profit_target": tp_target,
             "stop_loss_threshold": sl_threshold,
             "hedge_log": json.dumps([]), "hedge_pnl_usd": 0.0,
             "dvol_entry": dvol,
@@ -354,8 +353,24 @@ class StrategyEngine:
         sp_mid = sp_fill_price
         net_eth = sc_mid + sp_mid
         net_usd = net_eth * eth
+        total_premium = net_usd * contracts
+        sl_threshold  = total_premium * STOP_LOSS_MULT
 
-        log.info(f"Trade #{trade_id}: Strangle {int(short_put)}P/{int(short_call)}C net=${net_usd:.2f}")
+        # update DB with confirmed fill prices and correct premium/TP/SL
+        db.update_trade(trade_id, {
+            "call_premium":            sc_mid,
+            "put_premium":             sp_mid,
+            "total_premium_collected": total_premium,
+            "stop_loss_threshold":     sl_threshold,
+        })
+        # sync in-memory position
+        self._open_positions[trade_id].update({
+            "sc_entry_eth":    sc_mid,
+            "sp_entry_eth":    sp_mid,
+            "net_premium_usd": net_usd,
+        })
+
+        log.info(f"Trade #{trade_id}: Strangle {int(short_put)}P/{int(short_call)}C net=${total_premium:.2f} (fills: sc={sc_fill_price:.6f} sp={sp_fill_price:.6f})")
         await self.telegram.send(msg)
 
     async def _manage_position(self, trade_id, eth, dvol):
@@ -406,7 +421,7 @@ class StrategyEngine:
             "option_pnl_usd": option_pnl, "hedge_pnl_usd": 0.0,
             "total_pnl_usd": total_pnl, "pnl_pct": pnl_pct,
         })
-        emoji = {"CLOSED_TP": "✅", "CLOSED_SL": "🛑", "CLOSED_EXPIRY": "⏰"}.get(status, "📊")
+        emoji = {"CLOSED_SL": "🛑", "CLOSED_EXPIRY": "⏰"}.get(status, "📊")
         msg = (
             f"{emoji} *TRADE #{trade_id} CLOSED — {status}*\n"
             f"ETH @ ${eth:,.0f}\n"

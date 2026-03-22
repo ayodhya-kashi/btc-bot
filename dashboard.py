@@ -51,7 +51,6 @@ DASHBOARD_HTML = """<!DOCTYPE html>
   tr:hover td { background: rgba(255,255,255,.02); }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 500; }
   .badge-open    { background: rgba(88,166,255,.15); color: var(--blue); }
-  .badge-tp      { background: rgba(63,185,80,.15);  color: var(--green); }
   .badge-sl      { background: rgba(248,81,73,.15);  color: var(--red); }
   .badge-expiry  { background: rgba(210,153,34,.15); color: var(--amber); }
   .mono { font-family: monospace; font-size: 12px; }
@@ -75,7 +74,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 
   <!-- KPI row -->
   <div class="metrics-row" id="kpi-row">
-    <div class="metric"><div class="metric-label">ETH Price</div><div class="metric-val blue" id="eth-price">–</div></div>
+    <div class="metric"><div class="metric-label">BTC Price</div><div class="metric-val blue" id="eth-price">–</div></div>
     <div class="metric"><div class="metric-label">DVOL</div><div class="metric-val" id="dvol">–</div></div>
     <div class="metric"><div class="metric-label">Paper Capital</div><div class="metric-val">${{ "{:,.0f}".format(capital) }}</div></div>
     <div class="metric"><div class="metric-label">Total P&L</div><div class="metric-val" id="total-pnl">–</div></div>
@@ -101,7 +100,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <thead>
         <tr>
           <th>#</th><th>Opened</th><th>Closed</th><th>Status</th>
-          <th>ETH Entry</th><th>Call Strike</th><th>Put Strike</th>
+          <th>BTC Entry</th><th>Call Strike</th><th>Put Strike</th>
           <th>Premium $</th><th>Opt P&L</th><th>Hedge P&L</th><th>Net P&L</th><th>P&L %</th><th>DVOL</th>
         </tr>
       </thead>
@@ -124,7 +123,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
       <div class="section-header">Market Conditions</div>
       <table id="conditions-table">
         <tbody>
-          <tr><td style="color:var(--muted)">ETH/USD</td><td id="c-eth">–</td></tr>
+          <tr><td style="color:var(--muted)">BTC/USD</td><td id="c-eth">–</td></tr>
           <tr><td style="color:var(--muted)">DVOL</td><td id="c-dvol">–</td></tr>
           <tr><td style="color:var(--muted)">DVOL range</td><td>{{ dvol_min }}–{{ dvol_max }}</td></tr>
           <tr><td style="color:var(--muted)">Entry window</td><td>{{ entry_start }}:00–{{ entry_end }}:00 UTC</td></tr>
@@ -147,8 +146,8 @@ const fmtPct = v => v == null ? '–' : (Number(v)*100).toFixed(1) + '%';
 const color  = v => v >= 0 ? 'green' : 'red';
 
 const statusBadge = s => {
-  const m = {OPEN:'badge-open', CLOSED_TP:'badge-tp', CLOSED_SL:'badge-sl', CLOSED_EXPIRY:'badge-expiry'};
-  const l = {OPEN:'OPEN', CLOSED_TP:'TP ✓', CLOSED_SL:'SL ✗', CLOSED_EXPIRY:'EXPIRY'};
+  const m = {OPEN:'badge-open', CLOSED_SL:'badge-sl', CLOSED_EXPIRY:'badge-expiry'};
+  const l = {OPEN:'OPEN', CLOSED_SL:'SL ✗', CLOSED_EXPIRY:'EXPIRY'};
   return `<span class="badge ${m[s]||''}">${l[s]||s}</span>`;
 };
 
@@ -215,15 +214,15 @@ async function refresh() {
     } else {
       openEl.innerHTML = `<div style="overflow-x:auto"><table>
         <thead><tr>
-          <th>#</th><th>Opened</th><th>ETH Entry</th><th>Short put</th><th>Short call</th>
+          <th>#</th><th>Opened</th><th>BTC Entry</th><th>Short put</th><th>Short call</th>
           <th>Premium $</th><th>Unrealised P&L</th><th>SL Threshold</th><th>Max Loss</th><th>DVOL</th>
         </tr></thead><tbody>
         ${d.open_trades.map(t => `<tr>
           <td class="mono">#${t.id}</td>
           <td>${tsToTime(t.open_time)}</td>
           <td class="mono">$${Number(t.eth_price_entry).toLocaleString()}</td>
-          <td class="mono tag">${t.long_put_strike}P/${t.put_strike}P</td>
-          <td class="mono tag">${t.call_strike}C/${t.long_call_strike}C</td>
+          <td class="mono tag">${t.long_put_strike ? t.long_put_strike+"P/"+t.put_strike+"P" : t.put_strike+"P"}</td>
+          <td class="mono tag">${t.long_call_strike ? t.call_strike+"C/"+t.long_call_strike+"C" : t.call_strike+"C"}</td>
           <td>${fmtUSD(t.total_premium_collected)}</td>
           <td class="${color(t._unrealised||0)}">${fmtUSD(t._unrealised)}</td>
           <td class="red">${fmtUSD(t.stop_loss_threshold)}</td>
@@ -271,21 +270,23 @@ async function refresh() {
         hedgePanel.innerHTML = legsData.length ? `<table style="width:100%;border-collapse:collapse;font-size:13px">
           <thead><tr style="border-bottom:1px solid var(--muted)">
             <th style="text-align:left;padding:6px">Leg</th>
-            <th style="padding:6px">Entry $</th>
-            <th style="padding:6px">Bid $</th>
-            <th style="padding:6px">Ask $</th>
-            <th style="padding:6px">Mid $</th>
+            <th style="padding:6px">Entry</th>
+            <th style="padding:6px">Bid</th>
+            <th style="padding:6px">Ask</th>
+            <th style="padding:6px">Mid</th>
             <th style="padding:6px">P&L $</th>
           </tr></thead><tbody>
           ${legsData.map(l => {
-            const pnl = l.entry_usd - l.mid_usd;
+            const live = l.has_live;
+            const pnl = live ? (l.entry_usd - l.mid_usd) : null;
+            const ethSub = v => v ? `<br><span style="color:var(--muted);font-size:10px">${Number(v).toFixed(4)}\u0E3F</span>` : '';
             return `<tr style="border-bottom:1px solid var(--border)">
               <td style="padding:6px">${l.name}</td>
-              <td class="mono" style="padding:6px;text-align:right">${fmtUSD(l.entry_usd)}</td>
-              <td class="mono" style="padding:6px;text-align:right">${fmtUSD(l.bid_usd)}</td>
-              <td class="mono" style="padding:6px;text-align:right">${fmtUSD(l.ask_usd)}</td>
-              <td class="mono" style="padding:6px;text-align:right">${fmtUSD(l.mid_usd)}</td>
-              <td class="mono ${color(pnl)}" style="padding:6px;text-align:right;font-weight:600">${fmtUSD(pnl)}</td>
+              <td class="mono" style="padding:6px;text-align:right">${fmtUSD(l.entry_usd)}${ethSub(l.entry_eth)}</td>
+              <td class="mono" style="padding:6px;text-align:right">${live ? fmtUSD(l.bid_usd)+ethSub(l.bid_eth) : '–'}</td>
+              <td class="mono" style="padding:6px;text-align:right">${live ? fmtUSD(l.ask_usd)+ethSub(l.ask_eth) : '–'}</td>
+              <td class="mono" style="padding:6px;text-align:right">${live ? fmtUSD(l.mid_usd)+ethSub(l.mid_eth) : '<i style="color:#8b949e;font-size:11px">fetching</i>'}</td>
+              <td class="mono" style="padding:6px;text-align:right;font-weight:600;color:${pnl != null ? (pnl >= 0 ? 'var(--green)' : 'var(--red)') : 'inherit'}">${pnl != null ? fmtUSD(pnl) : '–'}</td>
             </tr>`;
           }).join('')}
           </tbody></table>` :
@@ -308,13 +309,12 @@ setInterval(refresh, {{ refresh_sec }} * 1000);
 @app.route("/")
 def index():
     from config import (DVOL_MIN, DVOL_MAX, ENTRY_HOUR_UTC, ENTRY_HOUR_UTC_END,
-                        SHORT_DELTA, TAKE_PROFIT_PCT, STOP_LOSS_MULT)
+                        SHORT_DELTA, STOP_LOSS_MULT)
     return render_template_string(DASHBOARD_HTML,
         capital=PAPER_CAPITAL_USD,
         dvol_min=DVOL_MIN, dvol_max=DVOL_MAX,
         entry_start=ENTRY_HOUR_UTC, entry_end=ENTRY_HOUR_UTC_END,
         target_delta=SHORT_DELTA,
-        tp_pct=int(TAKE_PROFIT_PCT * 100),
         sl_mult=STOP_LOSS_MULT,
         refresh_sec=DASHBOARD_REFRESH_SEC,
     )
@@ -350,30 +350,52 @@ def api_state():
                 c = ps.get("contracts", 1)
                 sc_now = bsp(eth, ps.get("short_call_strike", t["call_strike"]), T, sigma, "call")
                 sp_now = bsp(eth, ps.get("short_put_strike",  t["put_strike"]),  T, sigma, "put")
-                sc_e = t.get("call_premium", 0) * eth
-                sp_e = t.get("put_premium",  0) * eth
+                sc_e = ps.get("sc_entry_eth", t.get("call_premium", 0)) * eth
+                sp_e = ps.get("sp_entry_eth", t.get("put_premium",  0)) * eth
                 # P&L = premium received - current cost to close (BS mark)
-                t["_unrealised"] = ((sc_e - sc_now) + (sp_e - sp_now)) * c
+                # use live ticker mid only — consistent with leg panel, no BS divergence
+                _lsc_m = ps.get("live_sc", {}).get("mid")
+                _lsp_m = ps.get("live_sp", {}).get("mid")
+                if _lsc_m and _lsp_m:
+                    _sc_e = ps.get("sc_entry_eth", t.get("call_premium", 0))
+                    _sp_e = ps.get("sp_entry_eth", t.get("put_premium",  0))
+                    t["_unrealised"] = ((_sc_e - _lsc_m) + (_sp_e - _lsp_m)) * eth * c
+                else:
+                    t["_unrealised"] = None  # show – until live tickers arrive
             else:
                 t["_unrealised"] = None
             # add live leg prices if available
             if ps:
                 eth_p = snap.get("eth_price", 0)
                 c = ps.get("contracts", 1)
+                live_sc = ps.get("live_sc", {})
+                live_sp = ps.get("live_sp", {})
+                sc_entry = ps.get("sc_entry_eth", t.get("call_premium", 0))
+                sp_entry = ps.get("sp_entry_eth", t.get("put_premium",  0))
                 t["legs"] = [
                     {
-                        "name": "Short call",
-                        "entry_usd": t.get("call_premium", 0) * eth_p,
-                        "bid_usd": ps.get("live_sc", {}).get("bid", 0) * eth_p,
-                        "ask_usd": ps.get("live_sc", {}).get("ask", 0) * eth_p,
-                        "mid_usd": ps.get("live_sc", {}).get("mid", 0) * eth_p,
+                        "name":       "Short call",
+                        "entry_eth":  sc_entry,
+                        "entry_usd":  sc_entry * eth_p * c,
+                        "bid_eth":    live_sc.get("bid", 0),
+                        "bid_usd":    live_sc.get("bid", 0) * eth_p * c,
+                        "ask_eth":    live_sc.get("ask", 0),
+                        "ask_usd":    live_sc.get("ask", 0) * eth_p * c,
+                        "mid_eth":    live_sc.get("mid", 0),
+                        "mid_usd":    live_sc.get("mid", 0) * eth_p * c,
+                        "has_live":   bool(live_sc.get("bid") or live_sc.get("ask")),
                     },
                     {
-                        "name": "Short put",
-                        "entry_usd": t.get("put_premium", 0) * eth_p,
-                        "bid_usd": ps.get("live_sp", {}).get("bid", 0) * eth_p,
-                        "ask_usd": ps.get("live_sp", {}).get("ask", 0) * eth_p,
-                        "mid_usd": ps.get("live_sp", {}).get("mid", 0) * eth_p,
+                        "name":       "Short put",
+                        "entry_eth":  sp_entry,
+                        "entry_usd":  sp_entry * eth_p * c,
+                        "bid_eth":    live_sp.get("bid", 0),
+                        "bid_usd":    live_sp.get("bid", 0) * eth_p * c,
+                        "ask_eth":    live_sp.get("ask", 0),
+                        "ask_usd":    live_sp.get("ask", 0) * eth_p * c,
+                        "mid_eth":    live_sp.get("mid", 0),
+                        "mid_usd":    live_sp.get("mid", 0) * eth_p * c,
+                        "has_live":   bool(live_sp.get("bid") or live_sp.get("ask")),
                     }
                 ]
 
